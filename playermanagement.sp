@@ -31,7 +31,7 @@ public Plugin:myinfo =
 	name = "Player Management Plugin",
 	author = "CanadaRox",
 	description = "Player management!  Swap players/teams and spectate!",
-	version = "8",
+	version = "9",
 	url = ""
 };
 
@@ -55,10 +55,12 @@ new Handle:survivor_limit;
 new Handle:z_max_player_zombies;
 
 new L4D2Team:pendingSwaps[MAXPLAYERS+1];
+new lastRespecTime[MAXPLAYERS+1];
 new bool:blockVotes[MAXPLAYERS+1];
 new bool:isMapActive = false;
 
 new Handle:l4d_pm_supress_spectate;
+new Handle:l4d_respec_cooldown;
 
 public OnPluginStart()
 {
@@ -71,6 +73,7 @@ public OnPluginStart()
 	RegConsoleCmd("sm_spectate", Spectate_Cmd, "Moves you to the spectator team");
 	RegConsoleCmd("sm_spec", Spectate_Cmd, "Moves you to the spectator team");
 	RegConsoleCmd("sm_s", Spectate_Cmd, "Moves you to the spectator team");
+	RegConsoleCmd("sm_respec", Respec_Cmd, "Allows infected to force a spectator to respec to remove them from the HUD");
 
 	AddCommandListener(Vote_Listener, "vote");
 	AddCommandListener(Vote_Listener, "callvote");
@@ -83,6 +86,7 @@ public OnPluginStart()
 	SetConVarBounds(z_max_player_zombies, ConVarBound_Upper, false);
 
 	l4d_pm_supress_spectate = CreateConVar("l4d_pm_supress_spectate", "0", "Don't print messages when players spectate", FCVAR_PLUGIN, true, 0.0, true, 1.0);
+	l4d_respec_cooldown = CreateConVar("l4d_respec_cooldown", "5", "Seconds of cooldown after respec is used on a spectator", FCVAR_PLUGIN, true /*hasmin*/, 0.0, true /*hasmax*/, 600.0);
 }
 
 public OnMapStart()
@@ -154,6 +158,56 @@ public Action:Spectate_Cmd(client, args)
 		ChangeClientTeamEx(client, L4D2Team_Infected, true);
 		CreateTimer(0.1, RespecDelay_Timer, client);
 	}
+	return Plugin_Handled;
+}
+
+public Action:Respec_Cmd(client, args)
+{
+	if (client && L4D2Team:GetClientTeam(client) != L4D2Team_Infected)
+	{
+		ReplyToCommand(client, "[SM] This command can only be used by the Infected team.");
+		return Plugin_Handled;
+	}
+
+	decl String:searchName[64];
+	GetCmdArgString(searchName, sizeof(searchName));
+
+	new targetClient = FindTarget(client, searchName, true /*nobots*/, false /*immunity*/);
+
+	if (targetClient == -1)
+	{
+		ReplyToCommand(client, "[SM] Can't find player named '%s'.", searchName);
+		return Plugin_Handled;
+	}
+
+	decl String:targetName[64];
+	GetClientName(targetClient, targetName, sizeof(targetName));
+
+	if (L4D2Team:GetClientTeam(targetClient) != L4D2Team_Spectator)
+	{
+		ReplyToCommand(client, "[SM] %s is not a spectator; cannot be respecced.", targetName);
+		return Plugin_Handled;
+	}
+
+	new now = GetTime();
+	new timeDelta = (lastRespecTime[targetClient] + GetConVarInt(l4d_respec_cooldown)) - now;
+
+	if (timeDelta > 0)
+	{
+		ReplyToCommand(client, "[SM] %s cannot be respecced for another %i second(s), you must wait.", targetName, timeDelta);
+		return Plugin_Handled;
+	}
+
+	lastRespecTime[targetClient] = now;
+	ChangeClientTeamEx(targetClient, L4D2Team_Infected, true);
+	CreateTimer(0.1, RespecDelay_Timer, targetClient);
+
+	ReplyToCommand(client, "[SM] %s has been respecced.", targetName);
+
+	decl String:sourceName[64];
+	GetClientName(client, sourceName, sizeof(sourceName));
+	PrintToChat(targetClient, "[SM] %s has forced you to respectate.", sourceName);
+
 	return Plugin_Handled;
 }
 
