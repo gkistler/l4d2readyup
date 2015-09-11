@@ -31,7 +31,7 @@ public Plugin:myinfo =
 	name = "Pause plugin",
 	author = "CanadaRox",
 	description = "Adds pause functionality without breaking pauses",
-	version = "8",
+	version = "9",
 	url = ""
 };
 
@@ -67,6 +67,8 @@ new Handle:unpauseForward;
 new Handle:deferredPauseTimer;
 new Handle:l4d_ready_delay;
 new Handle:l4d_ready_blips;
+new bool:playerCantPause[MAXPLAYERS+1];
+new Handle:playerCantPauseTimers[MAXPLAYERS+1];
 
 public APLRes:AskPluginLoad2(Handle:myself, bool:late, String:error[], err_max)
 {
@@ -102,6 +104,7 @@ public OnPluginStart()
 	l4d_ready_blips = CreateConVar("l4d_ready_blips", "1", "Enable beep on unpause");
 
 	HookEvent("round_end", RoundEnd_Event, EventHookMode_PostNoCopy);
+	HookEvent("player_team", PlayerTeam_Event);
 }
 
 public OnAllPluginsLoaded()
@@ -129,8 +132,10 @@ public OnClientPutInServer(client)
 	if (isPaused)
 	{
 		if (!IsFakeClient(client))
+		{
 			PrintToChatAll("\x01[SM] \x03%N \x01is now fully loaded in game", client);
 			ChangeClientTeam(client, _:L4D2Team_Spectator);
+		}
 	}
 }
 
@@ -148,9 +153,30 @@ public RoundEnd_Event(Handle:event, const String:name[], bool:dontBroadcast)
 	}
 }
 
+public PlayerTeam_Event(Handle:event, const String:name[], bool:dontBroadcast)
+{
+	if (L4D2Team:GetEventInt(event, "team") == L4D2Team_Infected)
+	{
+		new client = GetClientOfUserId(GetEventInt(event, "userid"));
+		playerCantPause[client] = true;
+		if (playerCantPauseTimers[client] != INVALID_HANDLE)
+		{
+			KillTimer(playerCantPauseTimers[client]);
+			playerCantPauseTimers[client] = INVALID_HANDLE;
+		}
+		playerCantPauseTimers[client] = CreateTimer(2.0, AllowPlayerPause_Timer, client);
+	}
+}
+
+public Action:AllowPlayerPause_Timer(Handle:timer, any:client)
+{
+	playerCantPause[client] = false;
+	playerCantPauseTimers[client] = INVALID_HANDLE;
+}
+
 public Action:Pause_Cmd(client, args)
 {
-	if ((!readyUpIsAvailable || !IsInReady()) && pauseDelay == 0 && !isPaused && IsPlayer(client))
+	if ((!readyUpIsAvailable || !IsInReady()) && pauseDelay == 0 && !isPaused && IsPlayer(client) && !playerCantPause[client])
 	{
 		PrintToChatAll("[SM] %N paused the game", client);
 		pauseDelay = GetConVarInt(pauseDelayCvar);
@@ -180,7 +206,7 @@ public Action:PauseDelay_Timer(Handle:timer)
 
 public Action:Unpause_Cmd(client, args)
 {
-	if (isPaused && IsPlayer(client))
+	if (isPaused && IsPlayer(client) && !playerCantPause[client])
 	{
 		new L4D2Team:clientTeam = L4D2Team:GetClientTeam(client);
 		if (!teamReady[clientTeam])
